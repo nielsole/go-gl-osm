@@ -1,0 +1,9 @@
+FROM golang:1.22-alpine as build
+WORKDIR /build
+COPY . .
+RUN CGO_ENABLED=0 go build .
+
+FROM busybox
+COPY --from=build /build/go-gl-osm /bin/go-gl-osm
+
+ENTRYPOINT /bin/go-gl-osm
