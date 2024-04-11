@@ -14,8 +14,6 @@ import (
 )
 
 func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
-	initOpenGL()
-	defer glfw.Terminate()
 	dataBytes := drawOffscreen()
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Content-Length", strconv.Itoa(len(dataBytes)))
@@ -23,7 +21,7 @@ func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Dat
 
 }
 
-func initOpenGL() {
+func InitOpenGL() {
 	if err := glfw.Init(); err != nil {
 		log.Fatalf("failed to initialize glfw: %v", err)
 	}
@@ -41,6 +39,10 @@ func initOpenGL() {
 	if err := gl.Init(); err != nil {
 		log.Fatalf("failed to initialize go-gl: %v", err)
 	}
+}
+
+func CleanupOpenGL() {
+	glfw.Terminate()
 }
 
 func drawOffscreen() []byte {

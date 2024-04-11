@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -55,6 +56,8 @@ func main() {
 	}
 	defer renderer.Munmap(mmapData)
 	defer mmapFile.Close()
+	renderer.InitOpenGL()
+	defer renderer.CleanupOpenGL()
 	requestHandler = func(w http.ResponseWriter, r *http.Request) {
 		if *verbose {
 			logDebugf("%s request received: %s", r.Method, r.RequestURI)
@@ -84,6 +87,17 @@ func main() {
 
 	// Static HTTP request handler
 	httpServeMux.Handle("/", http.FileServer(http.Dir(*static_dir)))
+	httpServeMux.HandleFunc("/debug/pprof/", http.HandlerFunc(pprof.Index))
+	httpServeMux.HandleFunc("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
+	httpServeMux.HandleFunc("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
+	httpServeMux.HandleFunc("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+	httpServeMux.HandleFunc("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
+
+	// Register other pprof handlers
+	httpServeMux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	httpServeMux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	httpServeMux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	httpServeMux.Handle("/debug/pprof/block", pprof.Handler("block"))
 
 	// HTTP Server
 	httpServer := http.Server{
