@@ -14,7 +14,7 @@ To use this, pass an oms.pbf file via `-osm_path`.
 
 Currently osm.pbf files have to be prepared like so
 ```
-osmium add-locations-to-ways ~/Downloads/hamburg-latest.osm.pbf -o prepared.osm.pbf -f
+osmium add-locations-to-ways ~/Downloads/hamburg-latest.osm.pbf -o prepared.osm.pbf
 ```
 
 This creates a temporary file on startup, which might take some time.

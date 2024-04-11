@@ -30,7 +30,8 @@ func main() {
 	var requestHandler func(http.ResponseWriter, *http.Request)
 
 	if len(*osm_path) == 0 {
-
+		fmt.Println("No OSM file provided via `osm_path`. Exiting.")
+		os.Exit(1)
 	}
 	// Create a temp file.
 	var err error
@@ -62,8 +63,8 @@ func main() {
 			http.Error(w, "Only GET requests allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		renderer.HandleRenderRequest(w, r, data, 15, mmapData)
-		//handleRequest(w, r, *data_dir, *map_name, *renderd_socket, *renderd_timeout_duration, *tile_expiration_duration)
+		renderer.HandleRenderRequestOpenGL(w, r, data, 15, mmapData)
+		//renderer.HandleRenderRequest(w, r, data, 15, mmapData)
 	}
 	defer func() {
 		// Cleanup the temp file.
