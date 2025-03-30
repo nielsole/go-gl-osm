@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"reflect"
+	"unsafe"
 )
 
 func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
@@ -11,19 +13,19 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 	buf := new(bytes.Buffer)
 
 	// Write BoundingBox
-	err := binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lat)
+	err := binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lon)
 	if err != nil {
 		return 0, err
 	}
-	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lon)
-	if err != nil {
-		return 0, err
-	}
-	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Max.Lat)
+	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lat)
 	if err != nil {
 		return 0, err
 	}
 	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Max.Lon)
+	if err != nil {
+		return 0, err
+	}
+	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Max.Lat)
 	if err != nil {
 		return 0, err
 	}
@@ -36,11 +38,11 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 
 	// Write Points
 	for _, p := range mo.Points {
-		err = binary.Write(buf, binary.LittleEndian, p.Lat)
+		err = binary.Write(buf, binary.LittleEndian, p.Lon)
 		if err != nil {
 			return 0, err
 		}
-		err = binary.Write(buf, binary.LittleEndian, p.Lon)
+		err = binary.Write(buf, binary.LittleEndian, p.Lat)
 		if err != nil {
 			return 0, err
 		}
@@ -52,37 +54,18 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 }
 
 func ReadMapObject(mmapData *[]byte, offset int64, mo *MapObject) error {
-	// Go to the correct offset
+	// Cast the memory-mapped data slice starting at offset to a BoundingBox struct
+	bb := (*BoundingBox)(unsafe.Pointer(&(*mmapData)[offset]))
+	mo.BoundingBox = *bb
 
-	// Create a bytes reader for the buffer
-	reader := bytes.NewReader((*mmapData)[offset : offset+40])
+	// Read the length of points (located after the BoundingBox)
+	lenPoints := *(*int64)(unsafe.Pointer(&(*mmapData)[offset+32]))
 
-	// Read BoundingBox and length from the buffer
-	binary.Read(reader, binary.LittleEndian, &mo.BoundingBox.Min.Lat)
-	binary.Read(reader, binary.LittleEndian, &mo.BoundingBox.Min.Lon)
-	binary.Read(reader, binary.LittleEndian, &mo.BoundingBox.Max.Lat)
-	binary.Read(reader, binary.LittleEndian, &mo.BoundingBox.Max.Lon)
-
-	var lenPoints int64
-	binary.Read(reader, binary.LittleEndian, &lenPoints)
-
-	// Create a bytes reader for the buffer
-	reader = bytes.NewReader((*mmapData)[offset+40 : offset+40+lenPoints*16])
-
-	// Ensure Points slice is big enough
-	if cap(mo.Points) < int(lenPoints) {
-		mo.Points = make([]Point, lenPoints)
-	} else {
-		mo.Points = mo.Points[:lenPoints]
-	}
-
-	// Read Points from the buffer
-	for i := int64(0); i < lenPoints; i++ {
-		var p Point
-		binary.Read(reader, binary.LittleEndian, &p.Lat)
-		binary.Read(reader, binary.LittleEndian, &p.Lon)
-		mo.Points[i] = p
-	}
+	// Set up Points slice to point directly to the memory-mapped data
+	pointsHeader := (*reflect.SliceHeader)(unsafe.Pointer(&mo.Points))
+	pointsHeader.Data = uintptr(unsafe.Pointer(&(*mmapData)[offset+40]))
+	pointsHeader.Len = int(lenPoints)
+	pointsHeader.Cap = int(lenPoints)
 
 	return nil
 }
