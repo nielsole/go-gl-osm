@@ -40,9 +40,12 @@ func TestDrawOffscreenTransparency(t *testing.T) {
 }
 
 func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
-	// Initialize OpenGL
-	InitOpenGL()
-	defer CleanupOpenGL()
+	// Initialize OpenGL using the same code as production
+	renderer, err := NewOpenGLRenderer()
+	if err != nil {
+		t.Fatalf("Failed to initialize OpenGL: %v", err)
+	}
+	defer renderer.Close()
 
 	// Create test vertices for a diagonal line across the image
 	vertices := []float32{
@@ -125,7 +128,7 @@ func BenchmarkServeEmptyTileOpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	// Initialize OpenGL context
+	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
 		b.Fatal(err)
@@ -193,10 +196,6 @@ func setupOpenGL() error {
 func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	b.StopTimer()
 
-	if err := setupOpenGL(); err != nil {
-		b.Fatal(err)
-	}
-
 	pathTile := "/tile/11/1081/661.png"
 	tempFile, err := ioutil.TempFile("", "example")
 	if err != nil {
@@ -220,7 +219,7 @@ func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	// Initialize OpenGL context
+	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
 		b.Fatal(err)
@@ -279,7 +278,7 @@ func BenchmarkServeFullTileZ3OpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	// Initialize OpenGL context
+	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
 		b.Fatal(err)

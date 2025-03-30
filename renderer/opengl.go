@@ -156,6 +156,8 @@ func checkShaderError(shader uint32) error {
 }
 
 func InitOpenGL() {
+	runtime.LockOSThread()
+
 	if err := glfw.Init(); err != nil {
 		log.Fatalf("failed to initialize glfw: %v", err)
 	}
@@ -165,13 +167,21 @@ func InitOpenGL() {
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
 	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
 	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+	glfw.WindowHint(glfw.Decorated, glfw.False) // No window decorations needed for offscreen
+	glfw.WindowHint(glfw.Focused, glfw.False)   // No focus needed
+	glfw.WindowHint(glfw.AutoIconify, glfw.False)
+	glfw.WindowHint(glfw.Resizable, glfw.False)
+
 	window, err := glfw.CreateWindow(256, 256, "", nil, nil)
 	if err != nil {
+		glfw.Terminate()
 		log.Fatalf("failed to create window: %v", err)
 	}
 	window.MakeContextCurrent()
 
 	if err := gl.Init(); err != nil {
+		window.Destroy()
+		glfw.Terminate()
 		log.Fatalf("failed to initialize go-gl: %v", err)
 	}
 
@@ -417,34 +427,41 @@ func HandleOpenGLRenderRequest(w http.ResponseWriter, r *http.Request, data *Dat
 
 type OpenGLRenderer struct {
 	// OpenGL context and resources are managed globally
+	verticesBuffer []float32 // Reusable buffer for vertices
 }
 
 func NewOpenGLRenderer() (*OpenGLRenderer, error) {
+	runtime.LockOSThread()
 	InitOpenGL()
-	return &OpenGLRenderer{}, nil
+	return &OpenGLRenderer{
+		verticesBuffer: make([]float32, 0, 1024*1024), // Start with 1M float32 capacity
+	}, nil
 }
 
 func (r *OpenGLRenderer) Close() {
+	runtime.LockOSThread()
 	CleanupOpenGL()
 }
 
 func (r *OpenGLRenderer) RenderTile(data *Data, mmapData *[]byte, x, y, z uint32) image.Image {
 	// Use existing drawOffscreen function
-	vertices := prepareTileVertices(data, mmapData, x, y, z)
+	vertices := r.prepareTileVertices(data, mmapData, x, y, z)
 	imgBytes := drawOffscreen(vertices, 256)
 	img, _ := png.Decode(bytes.NewReader(imgBytes))
 	return img
 }
 
-func prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
+func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
 	tile := Tile{X: x, Y: y, Z: z}
 	bbox := getBoundingBox(tile)
 	const S = 256
 
-	var vertices []float32
+	// Reset the buffer length while keeping capacity
+	r.verticesBuffer = r.verticesBuffer[:0]
+
 	wayIndices, ok := data.Tiles[tile.index()]
 	if !ok {
-		return vertices
+		return r.verticesBuffer
 	}
 
 	way := MapObject{Points: make([]Point, 0, data.MaxPoints)}
@@ -454,13 +471,25 @@ func prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32
 			continue
 		}
 
+		// Pre-grow the slice if needed
+		requiredCap := len(r.verticesBuffer) + (len(way.Points)-1)*4 // 4 float32s per line segment
+		if requiredCap > cap(r.verticesBuffer) {
+			newCap := cap(r.verticesBuffer) * 2
+			if newCap < requiredCap {
+				newCap = requiredCap
+			}
+			newBuffer := make([]float32, len(r.verticesBuffer), newCap)
+			copy(newBuffer, r.verticesBuffer)
+			r.verticesBuffer = newBuffer
+		}
+
 		for i := 0; i < len(way.Points)-1; i++ {
 			p1 := pointToPixels(way.Points[i], bbox, S)
 			p2 := pointToPixels(way.Points[i+1], bbox, S)
-			vertices = append(vertices,
+			r.verticesBuffer = append(r.verticesBuffer,
 				float32(p1.X), float32(p1.Y),
 				float32(p2.X), float32(p2.Y))
 		}
 	}
-	return vertices
+	return r.verticesBuffer
 }
