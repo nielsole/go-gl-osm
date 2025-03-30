@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
-	"testing"
-	"time"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -67,11 +65,7 @@ func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Dat
 }
 
 func RenderLoop(ctx context.Context) {
-	runtime.LockOSThread() // Ensure rendering happens on a locked thread
-	// Initialize OpenGL here instead of separately
-	InitOpenGL()
-	defer CleanupOpenGL()
-
+	runtime.LockOSThread()
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,7 +156,6 @@ func checkShaderError(shader uint32) error {
 }
 
 func InitOpenGL() {
-	runtime.LockOSThread() // Lock the OS thread before GLFW init
 	if err := glfw.Init(); err != nil {
 		log.Fatalf("failed to initialize glfw: %v", err)
 	}
@@ -423,14 +416,12 @@ func HandleOpenGLRenderRequest(w http.ResponseWriter, r *http.Request, data *Dat
 }
 
 type OpenGLRenderer struct {
-	vertexBuffer []float32 // Add this field
+	// OpenGL context and resources are managed globally
 }
 
 func NewOpenGLRenderer() (*OpenGLRenderer, error) {
 	InitOpenGL()
-	return &OpenGLRenderer{
-		vertexBuffer: make([]float32, 0, 1024*1024), // Pre-allocate with reasonable capacity
-	}, nil
+	return &OpenGLRenderer{}, nil
 }
 
 func (r *OpenGLRenderer) Close() {
@@ -438,23 +429,22 @@ func (r *OpenGLRenderer) Close() {
 }
 
 func (r *OpenGLRenderer) RenderTile(data *Data, mmapData *[]byte, x, y, z uint32) image.Image {
-	vertices := r.prepareTileVertices(data, mmapData, x, y, z)
+	// Use existing drawOffscreen function
+	vertices := prepareTileVertices(data, mmapData, x, y, z)
 	imgBytes := drawOffscreen(vertices, 256)
 	img, _ := png.Decode(bytes.NewReader(imgBytes))
 	return img
 }
 
-func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
+func prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
 	tile := Tile{X: x, Y: y, Z: z}
 	bbox := getBoundingBox(tile)
 	const S = 256
 
-	// Reset the slice length while keeping capacity
-	r.vertexBuffer = r.vertexBuffer[:0]
-
+	var vertices []float32
 	wayIndices, ok := data.Tiles[tile.index()]
 	if !ok {
-		return r.vertexBuffer
+		return vertices
 	}
 
 	way := MapObject{Points: make([]Point, 0, data.MaxPoints)}
@@ -464,39 +454,13 @@ func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y,
 			continue
 		}
 
-		// Ensure capacity before adding new vertices
-		requiredCap := len(r.vertexBuffer) + (len(way.Points)-1)*4
-		if cap(r.vertexBuffer) < requiredCap {
-			newCap := cap(r.vertexBuffer) * 2
-			if newCap < requiredCap {
-				newCap = requiredCap
-			}
-			newBuffer := make([]float32, len(r.vertexBuffer), newCap)
-			copy(newBuffer, r.vertexBuffer)
-			r.vertexBuffer = newBuffer
-		}
-
 		for i := 0; i < len(way.Points)-1; i++ {
 			p1 := pointToPixels(way.Points[i], bbox, S)
 			p2 := pointToPixels(way.Points[i+1], bbox, S)
-			r.vertexBuffer = append(r.vertexBuffer,
+			vertices = append(vertices,
 				float32(p1.X), float32(p1.Y),
 				float32(p2.X), float32(p2.Y))
 		}
 	}
-	return r.vertexBuffer
-}
-
-// Update your test setup to ensure OpenGL initialization happens in the render loop
-func TestOpenGL(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start the render loop in a separate goroutine
-	go RenderLoop(ctx)
-
-	// Wait a moment for initialization
-	time.Sleep(100 * time.Millisecond)
-
-	// Run your tests...
+	return vertices
 }
