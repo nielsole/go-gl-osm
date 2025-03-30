@@ -12,20 +12,8 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 	// Buffer to store binary representation
 	buf := new(bytes.Buffer)
 
-	// Write BoundingBox
-	err := binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lon)
-	if err != nil {
-		return 0, err
-	}
-	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Min.Lat)
-	if err != nil {
-		return 0, err
-	}
-	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Max.Lon)
-	if err != nil {
-		return 0, err
-	}
-	err = binary.Write(buf, binary.LittleEndian, mo.BoundingBox.Max.Lat)
+	// Write BoundingBox - write the entire struct at once
+	err := binary.Write(buf, binary.LittleEndian, mo.BoundingBox)
 	if err != nil {
 		return 0, err
 	}
@@ -36,16 +24,10 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 		return 0, err
 	}
 
-	// Write Points
-	for _, p := range mo.Points {
-		err = binary.Write(buf, binary.LittleEndian, p.Lon)
-		if err != nil {
-			return 0, err
-		}
-		err = binary.Write(buf, binary.LittleEndian, p.Lat)
-		if err != nil {
-			return 0, err
-		}
+	// Write Points slice - write the entire slice at once
+	err = binary.Write(buf, binary.LittleEndian, mo.Points)
+	if err != nil {
+		return 0, err
 	}
 
 	// Write to file
