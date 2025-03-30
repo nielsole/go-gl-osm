@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -77,7 +78,6 @@ func main() {
 		} else {
 			fmt.Println("Temp file removed.")
 		}
-
 	}()
 
 	// Tile HTTP request handler
@@ -128,5 +128,5 @@ func main() {
 	// Initialize OpenGL and run render loop on main thread
 	renderer.InitOpenGL()
 	defer renderer.CleanupOpenGL()
-	renderer.RenderLoop()
+	renderer.RenderLoop(context.Background())
 }

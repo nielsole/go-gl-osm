@@ -5,6 +5,7 @@ package renderer
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image/png"
 	"io"
@@ -219,11 +220,16 @@ func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	}
 	defer renderer.Close()
 
+	// Start render loop in a goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	go RenderLoop(ctx)
+	defer cancel()
+
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		w := httptest.NewRecorder()
-		HandleOpenGLRenderRequest(w, req, data, 15, mmapData, renderer)
+		HandleRenderRequestOpenGL(w, req, data, 15, mmapData)
 
 		// Ensure the response was written
 		result := w.Result()

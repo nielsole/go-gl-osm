@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -54,19 +55,31 @@ type renderRequest struct {
 	maxTreeDepth uint32
 	mmapData     *[]byte
 	done         chan struct{}
+	ctx          context.Context
 }
 
 func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
 	done := make(chan struct{})
-	renderChan <- renderRequest{w, r, data, maxTreeDepth, mmapData, done}
+	renderChan <- renderRequest{w, r, data, maxTreeDepth, mmapData, done, r.Context()}
 	<-done
 }
 
-func RenderLoop() {
+func RenderLoop(ctx context.Context) {
 	runtime.LockOSThread()
-	for req := range renderChan {
-		handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData)
-		close(req.done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-renderChan:
+			select {
+			case <-req.ctx.Done():
+				close(req.done)
+				continue
+			default:
+				handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData)
+				close(req.done)
+			}
+		}
 	}
 }
 
