@@ -61,6 +61,8 @@ func TestBoundingBox(t *testing.T) {
 // ef29875363c610d536be31e603921c71ef698468
 //
 //	95696 ns/op
+//
+
 func BenchmarkServeEmptyTile(b *testing.B) {
 	b.StopTimer()
 	pathTile := "/tile/11/1086/664.png"
@@ -91,6 +93,8 @@ func BenchmarkServeEmptyTile(b *testing.B) {
 	}
 }
 
+// go test -benchtime 15s -bench=BenchmarkServe -cpuprofile cpu.out
+// go tool pprof cpu.out
 // b82ccbeef7bebe3647783ea9b3ed80638d5785cd
 //
 //	2579786011 ns/op
@@ -104,8 +108,12 @@ func BenchmarkServeEmptyTile(b *testing.B) {
 //
 // c03af9bccb2499f3f0291c8e8aca22f141f06600
 //
-//		2456439762 ns/op
-//	 2536369085 ns/op
+//			2456439762 ns/op
+//		 2536369085 ns/op
+//
+//	 From now on testing on AMD Ryzen 7 5700G with Radeon Graphics
+//	 43a5aa91274b0df4889709c318729d92c4fe7788
+//	   1418368129 ns/op
 func BenchmarkServeFullTile(b *testing.B) {
 	b.StopTimer()
 	pathTile := "/tile/11/1081/661.png"

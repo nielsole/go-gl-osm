@@ -138,6 +138,7 @@ func Munmap(data *[]byte) error {
 }
 
 func HandleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
+	panic("This is using the old renderer")
 	z, x, y, ext, err := utils.ParsePath(r.URL.Path)
 	if ext != "png" {
 		http.Error(w, "Only png is supported", http.StatusBadRequest)
