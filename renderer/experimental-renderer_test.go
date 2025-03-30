@@ -123,7 +123,7 @@ func BenchmarkServeFullTile(b *testing.B) {
 		os.Exit(1)
 	}
 	defer os.Remove(tempFile.Name())
-	data, err := LoadData("/home/nokadmin/projects/go_tile/mock_data/test.osm.pbf", 15, tempFile)
+	data, err := LoadData("../prepared.osm.pbf", 15, tempFile)
 	if err != nil {
 		b.Error(err)
 	}

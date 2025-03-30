@@ -243,6 +243,20 @@ func checkGLError(prefix string) error {
 }
 
 func drawOffscreen(vertices []float32, size int32) []byte {
+	// Add check for empty vertices at the start
+	if len(vertices) == 0 {
+		// Return a blank white tile
+		img := image.NewRGBA(image.Rect(0, 0, int(size), int(size)))
+		for y := 0; y < int(size); y++ {
+			for x := 0; x < int(size); x++ {
+				img.Set(x, y, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		var buf bytes.Buffer
+		png.Encode(&buf, img)
+		return buf.Bytes()
+	}
+
 	// Set up framebuffer with texture
 	gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
 	if err := checkGLError("BindFramebuffer"); err != nil {
@@ -370,4 +384,70 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+func HandleOpenGLRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxZoom int, mmapData *[]byte, renderer *OpenGLRenderer) {
+	// Extract x, y, z from request path
+	x, y, z, _, err := utils.ParsePath(r.URL.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Render tile using OpenGL
+	img := renderer.RenderTile(data, mmapData, x, y, z)
+
+	// Write PNG response
+	w.Header().Set("Content-Type", "image/png")
+	png.Encode(w, img)
+}
+
+type OpenGLRenderer struct {
+	// OpenGL context and resources are managed globally
+}
+
+func NewOpenGLRenderer() (*OpenGLRenderer, error) {
+	InitOpenGL()
+	return &OpenGLRenderer{}, nil
+}
+
+func (r *OpenGLRenderer) Close() {
+	CleanupOpenGL()
+}
+
+func (r *OpenGLRenderer) RenderTile(data *Data, mmapData *[]byte, x, y, z uint32) image.Image {
+	// Use existing drawOffscreen function
+	vertices := prepareTileVertices(data, mmapData, x, y, z)
+	imgBytes := drawOffscreen(vertices, 256)
+	img, _ := png.Decode(bytes.NewReader(imgBytes))
+	return img
+}
+
+func prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
+	tile := Tile{X: x, Y: y, Z: z}
+	bbox := getBoundingBox(tile)
+	const S = 256
+
+	var vertices []float32
+	wayIndices, ok := data.Tiles[tile.index()]
+	if !ok {
+		return vertices
+	}
+
+	way := MapObject{Points: make([]Point, 0, data.MaxPoints)}
+	for _, wayReference := range *wayIndices {
+		ReadMapObject(mmapData, int64(wayReference), &way)
+		if !bbox.overlaps(way.BoundingBox) {
+			continue
+		}
+
+		for i := 0; i < len(way.Points)-1; i++ {
+			p1 := pointToPixels(way.Points[i], bbox, S)
+			p2 := pointToPixels(way.Points[i+1], bbox, S)
+			vertices = append(vertices,
+				float32(p1.X), float32(p1.Y),
+				float32(p2.X), float32(p2.Y))
+		}
+	}
+	return vertices
 }

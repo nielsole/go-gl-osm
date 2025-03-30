@@ -1,10 +1,28 @@
+//go:build !windows && !darwin
+// +build !windows,!darwin
+
 package renderer
 
 import (
 	"bytes"
+	"fmt"
 	"image/png"
+	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"runtime"
+	"syscall"
 	"testing"
+
+	"github.com/go-gl/glfw/v3.3/glfw"
+)
+
+var (
+	sharedWindow *glfw.Window
+	initialized  bool
 )
 
 func init() {
@@ -78,6 +96,202 @@ func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
 		whiteCount := totalPixels - nonWhiteCount
 		if whiteCount < totalPixels*90/100 { // At least 90% should be white background
 			t.Errorf("Expected mostly white background, but only %d out of %d pixels are white", whiteCount, totalPixels)
+		}
+	}
+}
+
+func BenchmarkServeEmptyTileOpenGL(b *testing.B) {
+	b.StopTimer()
+	pathTile := "/tile/11/1086/664.png"
+	tempFile, err := ioutil.TempFile("", "example")
+	if err != nil {
+		fmt.Println("Cannot create temp file:", err)
+		os.Exit(1)
+	}
+	defer os.Remove(tempFile.Name())
+	data, err := LoadData("./prepared.osm.pbf", 15, tempFile)
+	if err != nil {
+		b.Error(err)
+	}
+	tempFileName := tempFile.Name()
+	tempFile.Close()
+
+	// Memory-map the file
+	mmapData, mmapFile, err := Mmap(tempFileName)
+	if err != nil {
+		log.Fatalf("There was an error memory-mapping temp file: %v", err)
+	}
+	defer syscall.Munmap(*mmapData)
+	defer mmapFile.Close()
+
+	// Initialize OpenGL context
+	renderer, err := NewOpenGLRenderer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer renderer.Close()
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
+		w := httptest.NewRecorder()
+		HandleOpenGLRenderRequest(w, req, data, 15, mmapData, renderer)
+
+		// Ensure the response was written
+		result := w.Result()
+		if result.StatusCode != http.StatusOK {
+			b.Fatalf("Expected status code %d but got %d", http.StatusOK, result.StatusCode)
+		}
+		// Read and close the body to ensure everything was written
+		body, err := io.ReadAll(result.Body)
+		result.Body.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(body) == 0 {
+			b.Fatal("Expected non-empty response body")
+		}
+	}
+}
+
+func setupOpenGL() error {
+	if initialized {
+		return nil
+	}
+	runtime.LockOSThread()
+
+	if err := glfw.Init(); err != nil {
+		return fmt.Errorf("failed to initialize GLFW: %v", err)
+	}
+
+	glfw.WindowHint(glfw.ContextVersionMajor, 4)
+	glfw.WindowHint(glfw.ContextVersionMinor, 1)
+	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
+	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+	glfw.WindowHint(glfw.Visible, glfw.False)
+
+	var err error
+	sharedWindow, err = glfw.CreateWindow(256, 256, "", nil, nil)
+	if err != nil {
+		glfw.Terminate()
+		return fmt.Errorf("failed to create window: %v", err)
+	}
+
+	sharedWindow.MakeContextCurrent()
+	initialized = true
+	return nil
+}
+
+func BenchmarkServeFullTileOpenGL(b *testing.B) {
+	b.StopTimer()
+
+	if err := setupOpenGL(); err != nil {
+		b.Fatal(err)
+	}
+
+	pathTile := "/tile/11/1081/661.png"
+	tempFile, err := ioutil.TempFile("", "example")
+	if err != nil {
+		b.Fatal("Cannot create temp file:", err)
+	}
+	defer os.Remove(tempFile.Name())
+
+	// Load the data first
+	data, err := LoadData("../prepared.osm.pbf", 15, tempFile)
+	if err != nil {
+		b.Fatal(err)
+	}
+	tempFileName := tempFile.Name()
+	tempFile.Close()
+
+	// Memory-map the file
+	mmapData, mmapFile, err := Mmap(tempFileName)
+	if err != nil {
+		b.Fatal("Error memory-mapping temp file:", err)
+	}
+	defer syscall.Munmap(*mmapData)
+	defer mmapFile.Close()
+
+	// Initialize OpenGL context
+	renderer, err := NewOpenGLRenderer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer renderer.Close()
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
+		w := httptest.NewRecorder()
+		HandleOpenGLRenderRequest(w, req, data, 15, mmapData, renderer)
+
+		// Ensure the response was written
+		result := w.Result()
+		if result.StatusCode != http.StatusOK {
+			b.Fatalf("Expected status code %d but got %d", http.StatusOK, result.StatusCode)
+		}
+		// Read and close the body to ensure everything was written
+		body, err := io.ReadAll(result.Body)
+		result.Body.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(body) == 0 {
+			b.Fatal("Expected non-empty response body")
+		}
+	}
+}
+
+func BenchmarkServeFullTileZ3OpenGL(b *testing.B) {
+	b.StopTimer()
+	pathTile := "/tile/3/4/2.png"
+	tempFile, err := ioutil.TempFile("", "example")
+	if err != nil {
+		fmt.Println("Cannot create temp file:", err)
+		os.Exit(1)
+	}
+	defer os.Remove(tempFile.Name())
+	data, err := LoadData("./prepared.osm.pbf", 15, tempFile)
+	if err != nil {
+		b.Error(err)
+	}
+	tempFileName := tempFile.Name()
+	tempFile.Close()
+
+	// Memory-map the file
+	mmapData, mmapFile, err := Mmap(tempFileName)
+	if err != nil {
+		log.Fatalf("There was an error memory-mapping temp file: %v", err)
+	}
+	defer syscall.Munmap(*mmapData)
+	defer mmapFile.Close()
+
+	// Initialize OpenGL context
+	renderer, err := NewOpenGLRenderer()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer renderer.Close()
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
+		w := httptest.NewRecorder()
+		HandleOpenGLRenderRequest(w, req, data, 15, mmapData, renderer)
+
+		// Ensure the response was written
+		result := w.Result()
+		if result.StatusCode != http.StatusOK {
+			b.Fatalf("Expected status code %d but got %d", http.StatusOK, result.StatusCode)
+		}
+		// Read and close the body to ensure everything was written
+		body, err := io.ReadAll(result.Body)
+		result.Body.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(body) == 0 {
+			b.Fatal("Expected non-empty response body")
 		}
 	}
 }
