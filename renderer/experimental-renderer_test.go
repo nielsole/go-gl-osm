@@ -12,7 +12,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // Test to check bounding box
@@ -88,7 +87,7 @@ func BenchmarkServeEmptyTile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }
 
@@ -133,7 +132,7 @@ func BenchmarkServeFullTile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }
 
@@ -177,6 +176,6 @@ func BenchmarkServeFullTileZ3(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }
