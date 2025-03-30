@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"log"
 	"net/http"
+	"runtime"
 	"strconv"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -29,6 +30,7 @@ const (
 		#version 410
 		out vec4 frag_color;
 		void main() {
+			// Black lines with full opacity
 			frag_color = vec4(0.0, 0.0, 0.0, 1.0);
 		}
 	` + "\x00"
@@ -39,11 +41,37 @@ var (
 	vao         uint32
 	vbo         uint32
 	fbo         uint32
-	rbo         uint32
+	texture     uint32
 	projUniform int32
 )
 
+var renderChan = make(chan renderRequest)
+
+type renderRequest struct {
+	w            http.ResponseWriter
+	r            *http.Request
+	data         *Data
+	maxTreeDepth uint32
+	mmapData     *[]byte
+	done         chan struct{}
+}
+
 func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
+	done := make(chan struct{})
+	renderChan <- renderRequest{w, r, data, maxTreeDepth, mmapData, done}
+	<-done
+}
+
+func RenderLoop() {
+	runtime.LockOSThread()
+	for req := range renderChan {
+		handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData)
+		close(req.done)
+	}
+}
+
+func handleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
+
 	z, x, y, ext, err := utils.ParsePath(r.URL.Path)
 	if ext != "png" {
 		http.Error(w, "Only png is supported", http.StatusBadRequest)
@@ -118,6 +146,7 @@ func InitOpenGL() {
 	if err := glfw.Init(); err != nil {
 		log.Fatalf("failed to initialize glfw: %v", err)
 	}
+
 	glfw.WindowHint(glfw.Visible, glfw.False)    // hidden window
 	glfw.WindowHint(glfw.ContextVersionMajor, 4) // targeting OpenGL version 4.1
 	glfw.WindowHint(glfw.ContextVersionMinor, 1)
@@ -132,6 +161,10 @@ func InitOpenGL() {
 	if err := gl.Init(); err != nil {
 		log.Fatalf("failed to initialize go-gl: %v", err)
 	}
+
+	// Enable blending for proper alpha handling
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 
 	// Initialize shaders and program
 	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
@@ -177,9 +210,16 @@ func InitOpenGL() {
 	gl.GenVertexArrays(1, &vao)
 	gl.GenBuffers(1, &vbo)
 
-	// Create FBO and RBO for offscreen rendering
+	// Create FBO and texture for offscreen rendering
 	gl.GenFramebuffers(1, &fbo)
-	gl.GenRenderbuffers(1, &rbo)
+	gl.GenTextures(1, &texture)
+
+	// Initialize texture
+	gl.BindTexture(gl.TEXTURE_2D, texture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.BindTexture(gl.TEXTURE_2D, 0)
 
 	gl.DeleteShader(vertexShader)
 	gl.DeleteShader(fragmentShader)
@@ -190,7 +230,7 @@ func CleanupOpenGL() {
 	gl.DeleteVertexArrays(1, &vao)
 	gl.DeleteBuffers(1, &vbo)
 	gl.DeleteFramebuffers(1, &fbo)
-	gl.DeleteRenderbuffers(1, &rbo)
+	gl.DeleteTextures(1, &texture)
 	glfw.Terminate()
 }
 
@@ -203,23 +243,57 @@ func checkGLError(prefix string) error {
 }
 
 func drawOffscreen(vertices []float32, size int32) []byte {
-	// Set up framebuffer
+	// Set up framebuffer with texture
 	gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
-	gl.BindRenderbuffer(gl.RENDERBUFFER, rbo)
-	gl.RenderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, size, size)
-	gl.FramebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, rbo)
-
-	if status := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); status != gl.FRAMEBUFFER_COMPLETE {
-		log.Printf("Framebuffer is not complete: %d", status)
-	}
-	if err := checkGLError("Framebuffer setup"); err != nil {
+	if err := checkGLError("BindFramebuffer"); err != nil {
 		log.Printf("OpenGL error: %v", err)
+	}
+
+	// Bind and resize texture
+	gl.BindTexture(gl.TEXTURE_2D, texture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+	if err := checkGLError("TexImage2D"); err != nil {
+		log.Printf("OpenGL error: %v", err)
+	}
+
+	// Attach texture to framebuffer
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
+	if err := checkGLError("FramebufferTexture2D"); err != nil {
+		log.Printf("OpenGL error: %v", err)
+	}
+
+	// Check framebuffer status
+	status := gl.CheckFramebufferStatus(gl.FRAMEBUFFER)
+	if err := checkGLError("CheckFramebufferStatus"); err != nil {
+		log.Printf("OpenGL error: %v", err)
+	}
+
+	if status != gl.FRAMEBUFFER_COMPLETE {
+		log.Printf("Framebuffer is not complete. Status: %d", status)
+		switch status {
+		case gl.FRAMEBUFFER_UNDEFINED:
+			log.Printf("FRAMEBUFFER_UNDEFINED")
+		case gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_ATTACHMENT")
+		case gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT")
+		case gl.FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER")
+		case gl.FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_READ_BUFFER")
+		case gl.FRAMEBUFFER_UNSUPPORTED:
+			log.Printf("FRAMEBUFFER_UNSUPPORTED")
+		case gl.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_MULTISAMPLE")
+		case gl.FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
+			log.Printf("FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS")
+		}
 	}
 
 	// Clear and set viewport
 	gl.Viewport(0, 0, size, size)
-	gl.ClearColor(1.0, 1.0, 1.0, 1.0)
-	gl.Clear(gl.COLOR_BUFFER_BIT)
+	gl.ClearColor(1.0, 1.0, 1.0, 1.0) // Set alpha to 1.0 for opaque white
+	gl.Clear(gl.COLOR_BUFFER_BIT)     // Only clear color buffer since we're doing 2D rendering
 
 	if err := checkGLError("Clear"); err != nil {
 		log.Printf("OpenGL error: %v", err)
@@ -259,8 +333,11 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 		log.Printf("OpenGL error: %v", err)
 	}
 
-	// Draw lines
+	// Draw lines with proper alpha blending
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	gl.DrawArrays(gl.LINES, 0, int32(len(vertices)/2))
+	gl.Disable(gl.BLEND)
 	if err := checkGLError("DrawArrays"); err != nil {
 		log.Printf("OpenGL error: %v", err)
 	}

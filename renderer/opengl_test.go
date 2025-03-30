@@ -13,6 +13,14 @@ func init() {
 }
 
 func TestDrawOffscreen(t *testing.T) {
+	runDrawOffscreenTest(t, false)
+}
+
+func TestDrawOffscreenTransparency(t *testing.T) {
+	runDrawOffscreenTest(t, true)
+}
+
+func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
 	// Initialize OpenGL
 	InitOpenGL()
 	defer CleanupOpenGL()
@@ -35,13 +43,20 @@ func TestDrawOffscreen(t *testing.T) {
 		t.Fatalf("Failed to decode PNG: %v", err)
 	}
 
-	// Count non-white pixels
+	// Count pixels
 	bounds := img.Bounds()
 	nonWhiteCount := 0
+	transparentCount := 0
+	totalPixels := bounds.Dx() * bounds.Dy()
+
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			r, g, b, _ := img.At(x, y).RGBA()
-			// Check if pixel is not white (white is 65535 in this color space)
+			r, g, b, a := img.At(x, y).RGBA()
+			// In 16-bit color space (values from 0 to 65535)
+			if a == 0 {
+				transparentCount++
+			}
+			// Check if pixel is not white (ignoring alpha)
 			if r != 65535 || g != 65535 || b != 65535 {
 				nonWhiteCount++
 			}
@@ -53,7 +68,16 @@ func TestDrawOffscreen(t *testing.T) {
 		t.Error("Expected some non-white pixels for drawn lines, but image appears to be blank")
 	}
 
-	// Optionally save the test image for visual inspection
-	// Uncomment for debugging:
-	// os.WriteFile("test_output.png", data, 0644)
+	if checkTransparency {
+		// The image should be fully opaque
+		if transparentCount > 0 {
+			t.Errorf("Expected opaque image, but found %d transparent pixels out of %d total pixels", transparentCount, totalPixels)
+		}
+
+		// Background should be white
+		whiteCount := totalPixels - nonWhiteCount
+		if whiteCount < totalPixels*90/100 { // At least 90% should be white background
+			t.Errorf("Expected mostly white background, but only %d out of %d pixels are white", whiteCount, totalPixels)
+		}
+	}
 }
