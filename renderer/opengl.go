@@ -149,6 +149,28 @@ func checkGLError(prefix string) error {
 	return nil
 }
 
+func setupFramebuffer(size int32) error {
+	// Set up framebuffer with texture
+	gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
+
+	// Bind and setup texture
+	gl.BindTexture(gl.TEXTURE_2D, texture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+
+	// Attach texture to framebuffer
+	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
+
+	// Check framebuffer status
+	status := gl.CheckFramebufferStatus(gl.FRAMEBUFFER)
+	if status != gl.FRAMEBUFFER_COMPLETE {
+		return fmt.Errorf("framebuffer is not complete, status: %d", status)
+	}
+
+	// Unbind
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	return nil
+}
+
 func drawOffscreen(vertices []float32, size int32) []byte {
 	// Add check for empty vertices at the start
 	if len(vertices) == 0 {
@@ -164,52 +186,8 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 		return buf.Bytes()
 	}
 
-	// Set up framebuffer with texture
+	// Just bind the framebuffer - setup is already done
 	gl.BindFramebuffer(gl.FRAMEBUFFER, fbo)
-	if err := checkGLError("BindFramebuffer"); err != nil {
-		log.Printf("OpenGL error: %v", err)
-	}
-
-	// Bind and resize texture
-	gl.BindTexture(gl.TEXTURE_2D, texture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
-	if err := checkGLError("TexImage2D"); err != nil {
-		log.Printf("OpenGL error: %v", err)
-	}
-
-	// Attach texture to framebuffer
-	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
-	if err := checkGLError("FramebufferTexture2D"); err != nil {
-		log.Printf("OpenGL error: %v", err)
-	}
-
-	// Check framebuffer status
-	status := gl.CheckFramebufferStatus(gl.FRAMEBUFFER)
-	if err := checkGLError("CheckFramebufferStatus"); err != nil {
-		log.Printf("OpenGL error: %v", err)
-	}
-
-	if status != gl.FRAMEBUFFER_COMPLETE {
-		log.Printf("Framebuffer is not complete. Status: %d", status)
-		switch status {
-		case gl.FRAMEBUFFER_UNDEFINED:
-			log.Printf("FRAMEBUFFER_UNDEFINED")
-		case gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_ATTACHMENT")
-		case gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT")
-		case gl.FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER")
-		case gl.FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_READ_BUFFER")
-		case gl.FRAMEBUFFER_UNSUPPORTED:
-			log.Printf("FRAMEBUFFER_UNSUPPORTED")
-		case gl.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_MULTISAMPLE")
-		case gl.FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
-			log.Printf("FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS")
-		}
-	}
 
 	// Clear and set viewport
 	gl.Viewport(0, 0, size, size)

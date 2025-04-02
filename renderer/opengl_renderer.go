@@ -125,7 +125,7 @@ func NewOpenGLRenderer() (*OpenGLRenderer, error) {
 	}
 
 	renderer := &OpenGLRenderer{
-		verticesBuffer: make([]float32, 0, 1024*1024),
+		verticesBuffer: make([]float32, 0, 4194304),
 		window:         window,
 		renderLock:     sync.Mutex{},
 	}
@@ -134,6 +134,8 @@ func NewOpenGLRenderer() (*OpenGLRenderer, error) {
 		renderer.Close()
 		return nil, fmt.Errorf("failed to initialize OpenGL resources: %v", err)
 	}
+
+	setupFramebuffer(256)
 
 	return renderer, nil
 }
@@ -182,6 +184,7 @@ func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y,
 		requiredCap := len(r.verticesBuffer) + (len(way.Points)-1)*4 // 4 float32s per line segment
 		if requiredCap > cap(r.verticesBuffer) {
 			newCap := cap(r.verticesBuffer) * 2
+			fmt.Println("newCap", newCap, "requiredCap", requiredCap)
 			if newCap < requiredCap {
 				newCap = requiredCap
 			}
