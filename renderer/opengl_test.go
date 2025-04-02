@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -24,11 +25,22 @@ import (
 var (
 	sharedWindow *glfw.Window
 	initialized  bool
+	testLock     sync.Mutex
 )
 
-func init() {
+func TestMain(m *testing.M) {
 	// GLFW event handling must run on the main thread
 	runtime.LockOSThread()
+
+	// Initialize GLFW for all tests
+	if err := glfw.Init(); err != nil {
+		log.Fatalf("Failed to initialize GLFW: %v", err)
+	}
+	defer glfw.Terminate()
+
+	// Run all tests
+	code := m.Run()
+	os.Exit(code)
 }
 
 func TestDrawOffscreen(t *testing.T) {
@@ -40,12 +52,21 @@ func TestDrawOffscreenTransparency(t *testing.T) {
 }
 
 func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
+	testLock.Lock()
+	defer testLock.Unlock()
+
+	runtime.LockOSThread()
+
 	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
 		t.Fatalf("Failed to initialize OpenGL: %v", err)
 	}
-	defer renderer.Close()
+	defer func() {
+		if renderer != nil && renderer.window != nil {
+			renderer.Close()
+		}
+	}()
 
 	// Create test vertices for a diagonal line across the image
 	vertices := []float32{
@@ -105,7 +126,11 @@ func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
 }
 
 func BenchmarkServeEmptyTileOpenGL(b *testing.B) {
-	b.StopTimer()
+	testLock.Lock()
+	defer testLock.Unlock()
+
+	runtime.LockOSThread()
+
 	pathTile := "/tile/11/1086/664.png"
 	tempFile, err := ioutil.TempFile("", "example")
 	if err != nil {
@@ -128,14 +153,17 @@ func BenchmarkServeEmptyTileOpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer renderer.Close()
+	defer func() {
+		if renderer != nil && renderer.window != nil {
+			renderer.Close()
+		}
+	}()
 
-	b.StartTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		w := httptest.NewRecorder()
@@ -194,8 +222,12 @@ func setupOpenGL() error {
 // cpu: AMD Ryzen 7 5700G with Radeon Graphics
 // BenchmarkServeFullTileOpenGL-16              724          22806541 ns/op
 func BenchmarkServeFullTileOpenGL(b *testing.B) {
-	b.StopTimer()
+	testLock.Lock()
+	defer testLock.Unlock()
 
+	runtime.LockOSThread()
+
+	// Load test data
 	pathTile := "/tile/11/1081/661.png"
 	tempFile, err := ioutil.TempFile("", "example")
 	if err != nil {
@@ -219,19 +251,24 @@ func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	// Initialize OpenGL using the same code as production
 	renderer, err := NewOpenGLRenderer()
 	if err != nil {
-		b.Fatal(err)
+		b.Fatalf("failed to create renderer: %v", err)
 	}
-	defer renderer.Close()
+	defer func() {
+		if renderer != nil && renderer.window != nil {
+			renderer.Close()
+		}
+	}()
 
-	// Start render loop in a goroutine
+	// Create a context for the benchmark
 	ctx, cancel := context.WithCancel(context.Background())
-	go RenderLoop(ctx)
 	defer cancel()
 
-	b.StartTimer()
+	// Start the render loop in a separate goroutine
+	go RenderLoop(ctx, renderer)
+
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		w := httptest.NewRecorder()

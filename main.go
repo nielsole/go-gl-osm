@@ -19,6 +19,8 @@ func init() {
 }
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	http_listen_host := flag.String("host", "0.0.0.0", "HTTP Listening host")
 	http_listen_port := flag.Int("port", 8080, "HTTP Listening port")
 	https_listen_port := flag.Int("tls_port", 8443, "HTTPS Listening port. This listener is only enabled if both tls cert and key are set.")
@@ -97,8 +99,9 @@ func main() {
 	httpServeMux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
 	httpServeMux.Handle("/debug/pprof/block", pprof.Handler("block"))
 
+	go renderer.Run(ctx)
 	// Start HTTP server in a goroutine
-	go func() {
+	func() {
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", *http_listen_host, *http_listen_port),
 			Handler: httpServeMux,
@@ -125,8 +128,4 @@ func main() {
 		}
 	}()
 
-	// Initialize OpenGL and run render loop on main thread
-	renderer.InitOpenGL()
-	defer renderer.CleanupOpenGL()
-	renderer.RenderLoop(context.Background())
 }

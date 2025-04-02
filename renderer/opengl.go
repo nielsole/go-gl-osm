@@ -13,7 +13,6 @@ import (
 	"strconv"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/nielsole/go-gl-osm/utils"
 )
 
@@ -64,7 +63,16 @@ func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Dat
 	<-done
 }
 
-func RenderLoop(ctx context.Context) {
+// func init() {
+// 	runtime.LockOSThread()
+// 	var err error
+// 	mainRenderer, err = NewOpenGLRenderer()
+// 	if err != nil {
+// 		log.Fatalf("Failed to initialize OpenGL renderer: %v", err)
+// 	}
+// }
+
+func RenderLoop(ctx context.Context, mainRenderer *OpenGLRenderer) {
 	runtime.LockOSThread()
 	for {
 		select {
@@ -76,15 +84,17 @@ func RenderLoop(ctx context.Context) {
 				close(req.done)
 				continue
 			default:
-				handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData)
+				mainRenderer.renderLock.Lock()
+				mainRenderer.window.MakeContextCurrent()
+				handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData, mainRenderer)
+				mainRenderer.renderLock.Unlock()
 				close(req.done)
 			}
 		}
 	}
 }
 
-func handleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
-
+func handleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte, mainRenderer *OpenGLRenderer) {
 	z, x, y, ext, err := utils.ParsePath(r.URL.Path)
 	if ext != "png" {
 		http.Error(w, "Only png is supported", http.StatusBadRequest)
@@ -93,49 +103,10 @@ func handleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, max
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	tile := Tile{
-		X: x,
-		Y: y,
-		Z: z,
-	}
-	bbox := getBoundingBox(tile)
-	// fmt.Printf("Bounding box is from Lat %f, Lon %f to Lat %f, Lon %f\n", bbox.Min.Lat, bbox.Min.Lon, bbox.Max.Lat, bbox.Max.Lon)
 
 	const S = 256
-	parentTile := tile
-	for tempZ := z; tempZ > maxTreeDepth; tempZ-- {
-		parentTile = parentTile.getParent()
-	}
-	wayIndices, ok := data.Tiles[parentTile.index()]
-	if !ok {
-		// Return 404
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	way := MapObject{Points: make([]Point, 0, data.MaxPoints)}
-	var vertices []float32
-	for _, wayReference := range *wayIndices {
-		err := ReadMapObject(mmapData, int64(wayReference), &way)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if !bbox.overlaps(way.BoundingBox) {
-			continue
-		}
-
-		for i := 0; i < len(way.Points)-1; i++ {
-			p1 := pointToPixels(way.Points[i], bbox, S)
-			p2 := pointToPixels(way.Points[i+1], bbox, S)
-
-			// Add line vertices
-			vertices = append(vertices,
-				float32(p1.X), float32(p1.Y),
-				float32(p2.X), float32(p2.Y))
-		}
-	}
-
+	// Use the global renderer's verticesBuffer
+	vertices := mainRenderer.prepareTileVertices(data, mmapData, x, y, z)
 	dataBytes := drawOffscreen(vertices, S)
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Content-Length", strconv.Itoa(len(dataBytes)))
@@ -155,106 +126,19 @@ func checkShaderError(shader uint32) error {
 	return nil
 }
 
-func InitOpenGL() {
+func Run(ctx context.Context) error {
+	// Initialize OpenGL and run render loop on main thread
 	runtime.LockOSThread()
 
-	if err := glfw.Init(); err != nil {
-		log.Fatalf("failed to initialize glfw: %v", err)
-	}
-
-	glfw.WindowHint(glfw.Visible, glfw.False)    // hidden window
-	glfw.WindowHint(glfw.ContextVersionMajor, 4) // targeting OpenGL version 4.1
-	glfw.WindowHint(glfw.ContextVersionMinor, 1)
-	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
-	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
-	glfw.WindowHint(glfw.Decorated, glfw.False) // No window decorations needed for offscreen
-	glfw.WindowHint(glfw.Focused, glfw.False)   // No focus needed
-	glfw.WindowHint(glfw.AutoIconify, glfw.False)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
-
-	window, err := glfw.CreateWindow(256, 256, "", nil, nil)
+	var err error
+	mainRenderer, err := NewOpenGLRenderer()
 	if err != nil {
-		glfw.Terminate()
-		log.Fatalf("failed to create window: %v", err)
+		return fmt.Errorf("failed to initialize OpenGL renderer: %v", err)
 	}
-	window.MakeContextCurrent()
+	defer mainRenderer.Close()
 
-	if err := gl.Init(); err != nil {
-		window.Destroy()
-		glfw.Terminate()
-		log.Fatalf("failed to initialize go-gl: %v", err)
-	}
-
-	// Enable blending for proper alpha handling
-	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-
-	// Initialize shaders and program
-	vertexShader := gl.CreateShader(gl.VERTEX_SHADER)
-	vertexShaderCString, free := gl.Strs(vertexShaderSource)
-	gl.ShaderSource(vertexShader, 1, vertexShaderCString, nil)
-	free()
-	gl.CompileShader(vertexShader)
-	if err := checkShaderError(vertexShader); err != nil {
-		log.Fatalf("vertex shader error: %v", err)
-	}
-
-	fragmentShader := gl.CreateShader(gl.FRAGMENT_SHADER)
-	fragmentShaderCString, free := gl.Strs(fragmentShaderSource)
-	gl.ShaderSource(fragmentShader, 1, fragmentShaderCString, nil)
-	free()
-	gl.CompileShader(fragmentShader)
-	if err := checkShaderError(fragmentShader); err != nil {
-		log.Fatalf("fragment shader error: %v", err)
-	}
-
-	program = gl.CreateProgram()
-	gl.AttachShader(program, vertexShader)
-	gl.AttachShader(program, fragmentShader)
-	gl.LinkProgram(program)
-
-	var status int32
-	gl.GetProgramiv(program, gl.LINK_STATUS, &status)
-	if status == gl.FALSE {
-		var logLength int32
-		gl.GetProgramiv(program, gl.INFO_LOG_LENGTH, &logLength)
-		logMsg := make([]byte, logLength)
-		gl.GetProgramInfoLog(program, logLength, nil, &logMsg[0])
-		log.Fatalf("program link error: %s", string(logMsg))
-	}
-
-	// Get uniform locations
-	projUniform = gl.GetUniformLocation(program, gl.Str("projection\x00"))
-	if projUniform < 0 {
-		log.Printf("Warning: projection uniform not found")
-	}
-
-	// Create VAO and VBO
-	gl.GenVertexArrays(1, &vao)
-	gl.GenBuffers(1, &vbo)
-
-	// Create FBO and texture for offscreen rendering
-	gl.GenFramebuffers(1, &fbo)
-	gl.GenTextures(1, &texture)
-
-	// Initialize texture
-	gl.BindTexture(gl.TEXTURE_2D, texture)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.BindTexture(gl.TEXTURE_2D, 0)
-
-	gl.DeleteShader(vertexShader)
-	gl.DeleteShader(fragmentShader)
-}
-
-func CleanupOpenGL() {
-	gl.DeleteProgram(program)
-	gl.DeleteVertexArrays(1, &vao)
-	gl.DeleteBuffers(1, &vbo)
-	gl.DeleteFramebuffers(1, &fbo)
-	gl.DeleteTextures(1, &texture)
-	glfw.Terminate()
+	RenderLoop(ctx, mainRenderer)
+	return nil
 }
 
 func checkGLError(prefix string) error {
@@ -423,73 +307,4 @@ func HandleOpenGLRenderRequest(w http.ResponseWriter, r *http.Request, data *Dat
 	// Write PNG response
 	w.Header().Set("Content-Type", "image/png")
 	png.Encode(w, img)
-}
-
-type OpenGLRenderer struct {
-	// OpenGL context and resources are managed globally
-	verticesBuffer []float32 // Reusable buffer for vertices
-}
-
-func NewOpenGLRenderer() (*OpenGLRenderer, error) {
-	runtime.LockOSThread()
-	InitOpenGL()
-	return &OpenGLRenderer{
-		verticesBuffer: make([]float32, 0, 1024*1024), // Start with 1M float32 capacity
-	}, nil
-}
-
-func (r *OpenGLRenderer) Close() {
-	runtime.LockOSThread()
-	CleanupOpenGL()
-}
-
-func (r *OpenGLRenderer) RenderTile(data *Data, mmapData *[]byte, x, y, z uint32) image.Image {
-	// Use existing drawOffscreen function
-	vertices := r.prepareTileVertices(data, mmapData, x, y, z)
-	imgBytes := drawOffscreen(vertices, 256)
-	img, _ := png.Decode(bytes.NewReader(imgBytes))
-	return img
-}
-
-func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
-	tile := Tile{X: x, Y: y, Z: z}
-	bbox := getBoundingBox(tile)
-	const S = 256
-
-	// Reset the buffer length while keeping capacity
-	r.verticesBuffer = r.verticesBuffer[:0]
-
-	wayIndices, ok := data.Tiles[tile.index()]
-	if !ok {
-		return r.verticesBuffer
-	}
-
-	way := MapObject{Points: make([]Point, 0, data.MaxPoints)}
-	for _, wayReference := range *wayIndices {
-		ReadMapObject(mmapData, int64(wayReference), &way)
-		if !bbox.overlaps(way.BoundingBox) {
-			continue
-		}
-
-		// Pre-grow the slice if needed
-		requiredCap := len(r.verticesBuffer) + (len(way.Points)-1)*4 // 4 float32s per line segment
-		if requiredCap > cap(r.verticesBuffer) {
-			newCap := cap(r.verticesBuffer) * 2
-			if newCap < requiredCap {
-				newCap = requiredCap
-			}
-			newBuffer := make([]float32, len(r.verticesBuffer), newCap)
-			copy(newBuffer, r.verticesBuffer)
-			r.verticesBuffer = newBuffer
-		}
-
-		for i := 0; i < len(way.Points)-1; i++ {
-			p1 := pointToPixels(way.Points[i], bbox, S)
-			p2 := pointToPixels(way.Points[i+1], bbox, S)
-			r.verticesBuffer = append(r.verticesBuffer,
-				float32(p1.X), float32(p1.Y),
-				float32(p2.X), float32(p2.Y))
-		}
-	}
-	return r.verticesBuffer
 }
