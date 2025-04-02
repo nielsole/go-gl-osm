@@ -19,10 +19,36 @@ import (
 const (
 	vertexShaderSource = `
 		#version 410
-		in vec2 position;
+		in vec2 position; // lon, lat
 		uniform mat4 projection;
+		uniform vec4 bbox; // minLon, minLat, maxLon, maxLat
+		uniform float tileSize;
+		
+		const float PI = 3.14159265359;
+		const float MAX_LAT = 85.0511287798; // Maximum latitude in Web Mercator
+		
+		float lat2y_mercator(float lat) {
+			// Clamp latitude to valid Mercator range
+			lat = clamp(lat, -MAX_LAT, MAX_LAT);
+			float latRad = lat * PI / 180.0;
+			return log(tan(PI/4.0 + latRad/2.0));
+		}
+		
 		void main() {
-			gl_Position = projection * vec4(position, 0.0, 1.0);
+			// Convert longitude to x coordinate (linear)
+			float x = (position.x - bbox.x) / (bbox.z - bbox.x);
+			
+			// Convert latitude to y coordinate (Mercator)
+			float y_mercator = lat2y_mercator(position.y);
+			float min_y_mercator = lat2y_mercator(bbox.y);
+			float max_y_mercator = lat2y_mercator(bbox.w);
+			float y = (y_mercator - min_y_mercator) / (max_y_mercator - min_y_mercator);
+			
+			// Scale to tile size and flip y coordinate
+			vec2 pixel = vec2(x * tileSize, (1.0 - y) * tileSize);
+			
+			// Apply projection matrix
+			gl_Position = projection * vec4(pixel, 0.0, 1.0);
 		}
 	` + "\x00"
 
@@ -37,12 +63,14 @@ const (
 )
 
 var (
-	program     uint32
-	vao         uint32
-	vbo         uint32
-	fbo         uint32
-	texture     uint32
-	projUniform int32
+	program         uint32
+	vao             uint32
+	vbo             uint32
+	fbo             uint32
+	texture         uint32
+	projUniform     int32
+	bboxUniform     int32
+	tileSizeUniform int32
 )
 
 var renderChan = make(chan renderRequest)
@@ -173,7 +201,7 @@ func setupFramebuffer(size int32) error {
 
 func drawOffscreen(vertices []float32, size int32) []byte {
 	// Add check for empty vertices at the start
-	if len(vertices) == 0 {
+	if len(vertices) < 3 { // Need at least tile coordinates
 		// Return a blank white tile
 		img := image.NewRGBA(image.Rect(0, 0, int(size), int(size)))
 		for y := 0; y < int(size); y++ {
@@ -217,10 +245,46 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 		log.Printf("OpenGL error: %v", err)
 	}
 
+	// Set tile size uniform
+	gl.Uniform1f(tileSizeUniform, float32(size))
+	if err := checkGLError("UniformTileSize"); err != nil {
+		log.Printf("OpenGL error: %v", err)
+	}
+
+	// Get tile coordinates from the start of the buffer
+	x := uint32(vertices[0])
+	y := uint32(vertices[1])
+	z := uint32(vertices[2])
+	tile := Tile{X: x, Y: y, Z: z}
+	bbox := getBoundingBox(tile)
+
+	// Set bounding box uniform using the tile's actual bounds
+	gl.Uniform4f(bboxUniform,
+		float32(bbox.Min.Lon), float32(bbox.Min.Lat),
+		float32(bbox.Max.Lon), float32(bbox.Max.Lat))
+	if err := checkGLError("UniformBBox"); err != nil {
+		log.Printf("OpenGL error: %v", err)
+	}
+
+	// Skip the first 3 floats (tile coordinates) when setting up vertex buffer
+	vertexData := vertices[3:]
+	if len(vertexData) == 0 {
+		// No actual vertices to draw
+		img := image.NewRGBA(image.Rect(0, 0, int(size), int(size)))
+		for y := 0; y < int(size); y++ {
+			for x := 0; x < int(size); x++ {
+				img.Set(x, y, color.RGBA{255, 255, 255, 255})
+			}
+		}
+		var buf bytes.Buffer
+		png.Encode(&buf, img)
+		return buf.Bytes()
+	}
+
 	// Bind and update vertex buffer
 	gl.BindVertexArray(vao)
 	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.STATIC_DRAW)
+	gl.BufferData(gl.ARRAY_BUFFER, len(vertexData)*4, gl.Ptr(vertexData), gl.STATIC_DRAW)
 	if err := checkGLError("Buffer setup"); err != nil {
 		log.Printf("OpenGL error: %v", err)
 	}
@@ -235,7 +299,7 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 	// Draw lines with proper alpha blending
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-	gl.DrawArrays(gl.LINES, 0, int32(len(vertices)/2))
+	gl.DrawArrays(gl.LINES, 0, int32(len(vertexData)/2))
 	gl.Disable(gl.BLEND)
 	if err := checkGLError("DrawArrays"); err != nil {
 		log.Printf("OpenGL error: %v", err)

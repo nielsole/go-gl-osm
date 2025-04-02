@@ -70,10 +70,11 @@ func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
 
 	// Create test vertices for a diagonal line across the image
 	vertices := []float32{
-		0, 0, // Start point
-		256, 256, // End point
-		0, 256, // Another line
-		256, 0, // Creating an X shape
+		0, 0, 0, // Tile coordinates (x, y, z)
+		-180.0, -85.0, // Bottom-left of world
+		180.0, 85.0, // Top-right of world
+		-180.0, 85.0, // Top-left of world
+		180.0, -85.0, // Bottom-right of world
 	}
 
 	// Render the image

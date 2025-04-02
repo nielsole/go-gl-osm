@@ -66,6 +66,16 @@ func (r *OpenGLRenderer) InitOpenGL() error {
 		log.Printf("Warning: projection uniform not found")
 	}
 
+	bboxUniform = gl.GetUniformLocation(program, gl.Str("bbox\x00"))
+	if bboxUniform < 0 {
+		log.Printf("Warning: bbox uniform not found")
+	}
+
+	tileSizeUniform = gl.GetUniformLocation(program, gl.Str("tileSize\x00"))
+	if tileSizeUniform < 0 {
+		log.Printf("Warning: tileSize uniform not found")
+	}
+
 	// Create VAO and VBO
 	gl.GenVertexArrays(1, &vao)
 	gl.GenBuffers(1, &vbo)
@@ -168,6 +178,9 @@ func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y,
 	// Reset the buffer length while keeping capacity
 	r.verticesBuffer = r.verticesBuffer[:0]
 
+	// Add tile coordinates at the start of the buffer
+	r.verticesBuffer = append(r.verticesBuffer, float32(x), float32(y), float32(z))
+
 	wayIndices, ok := data.Tiles[tile.index()]
 	if !ok {
 		return r.verticesBuffer
@@ -194,11 +207,10 @@ func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y,
 		}
 
 		for i := 0; i < len(way.Points)-1; i++ {
-			p1 := pointToPixels(way.Points[i], bbox, S)
-			p2 := pointToPixels(way.Points[i+1], bbox, S)
+			// Pass raw geographic coordinates
 			r.verticesBuffer = append(r.verticesBuffer,
-				float32(p1.X), float32(p1.Y),
-				float32(p2.X), float32(p2.Y))
+				float32(way.Points[i].Lon), float32(way.Points[i].Lat),
+				float32(way.Points[i+1].Lon), float32(way.Points[i+1].Lat))
 		}
 	}
 	return r.verticesBuffer
