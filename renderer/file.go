@@ -36,9 +36,8 @@ func WriteMapObject(file *os.File, mo MapObject) (int64, error) {
 }
 
 func ReadMapObject(mmapData *[]byte, offset int64, mo *MapObject) error {
-	// Cast the memory-mapped data slice starting at offset to a BoundingBox struct
-	bb := (*BoundingBox)(unsafe.Pointer(&(*mmapData)[offset]))
-	mo.BoundingBox = *bb
+	// Directly assign the pointer to the memory-mapped data
+	mo.BoundingBox = (*BoundingBox)(unsafe.Pointer(&(*mmapData)[offset]))
 
 	// Read the length of points (located after the BoundingBox)
 	lenPoints := *(*int64)(unsafe.Pointer(&(*mmapData)[offset+32]))

@@ -8,7 +8,7 @@ import (
 func TestReadMapObject(t *testing.T) {
 	// Create a sample MapObject
 	original := MapObject{
-		BoundingBox: BoundingBox{
+		BoundingBox: &BoundingBox{
 			Min: Point{Lat: 1.0, Lon: 2.0},
 			Max: Point{Lat: 3.0, Lon: 4.0},
 		},

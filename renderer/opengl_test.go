@@ -221,6 +221,11 @@ func setupOpenGL() error {
 // 2307d92df2000084e5133d42a7df062520717043
 // cpu: AMD Ryzen 7 5700G with Radeon Graphics
 // BenchmarkServeFullTileOpenGL-16              724          22806541 ns/op
+
+// f17f34cc40e064a18e54ea20b994fedadfdde9fb
+// cpu: AMD Ryzen 7 5700G with Radeon Graphics
+// BenchmarkServeFullTileOpenGL-16              1299         13154137 ns/op
+
 func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	testLock.Lock()
 	defer testLock.Unlock()
