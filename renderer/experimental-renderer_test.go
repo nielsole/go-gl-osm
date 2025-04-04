@@ -12,7 +12,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // Test to check bounding box
@@ -62,6 +61,8 @@ func TestBoundingBox(t *testing.T) {
 // ef29875363c610d536be31e603921c71ef698468
 //
 //	95696 ns/op
+//
+
 func BenchmarkServeEmptyTile(b *testing.B) {
 	b.StopTimer()
 	pathTile := "/tile/11/1086/664.png"
@@ -88,10 +89,12 @@ func BenchmarkServeEmptyTile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }
 
+// go test -benchtime 15s -bench=BenchmarkServe -cpuprofile cpu.out
+// go tool pprof cpu.out
 // b82ccbeef7bebe3647783ea9b3ed80638d5785cd
 //
 //	2579786011 ns/op
@@ -105,8 +108,12 @@ func BenchmarkServeEmptyTile(b *testing.B) {
 //
 // c03af9bccb2499f3f0291c8e8aca22f141f06600
 //
-//		2456439762 ns/op
-//	 2536369085 ns/op
+//			2456439762 ns/op
+//		 2536369085 ns/op
+//
+//	 From now on testing on AMD Ryzen 7 5700G with Radeon Graphics
+//	 43a5aa91274b0df4889709c318729d92c4fe7788
+//	   1418368129 ns/op
 func BenchmarkServeFullTile(b *testing.B) {
 	b.StopTimer()
 	pathTile := "/tile/11/1081/661.png"
@@ -116,7 +123,7 @@ func BenchmarkServeFullTile(b *testing.B) {
 		os.Exit(1)
 	}
 	defer os.Remove(tempFile.Name())
-	data, err := LoadData("/home/nokadmin/projects/go_tile/mock_data/test.osm.pbf", 15, tempFile)
+	data, err := LoadData("../prepared.osm.pbf", 15, tempFile)
 	if err != nil {
 		b.Error(err)
 	}
@@ -133,7 +140,7 @@ func BenchmarkServeFullTile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }
 
@@ -177,6 +184,6 @@ func BenchmarkServeFullTileZ3(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
 		resp := httptest.ResponseRecorder{}
-		HandleRenderRequest(&resp, req, time.Second, data, 15, mmapData)
+		HandleRenderRequest(&resp, req, data, 15, mmapData)
 	}
 }

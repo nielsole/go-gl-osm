@@ -17,7 +17,7 @@ func getBoundingBox(tile Tile) BoundingBox {
 	return BoundingBox{pointMin, pointMax}
 }
 
-func getBoundingBoxFromWay(way *osm.Way) BoundingBox {
+func getBoundingBoxFromWay(way *osm.Way) *BoundingBox {
 	var lonMin float64 = 200.0
 	var latMin float64 = 200.0
 	var lonMax float64 = -200.0
@@ -30,7 +30,7 @@ func getBoundingBoxFromWay(way *osm.Way) BoundingBox {
 	}
 	pointMin := Point{lonMin, latMin}
 	pointMax := Point{lonMax, latMax}
-	return BoundingBox{pointMin, pointMax}
+	return &BoundingBox{pointMin, pointMax}
 
 }
 
@@ -43,7 +43,7 @@ func deg2num(lat_deg, lon_deg float64, zoom uint32) (x, y uint32) {
 	return
 }
 
-func getTilesForBoundingBox(bbox BoundingBox, minZ, maxZ uint32) []Tile {
+func getTilesForBoundingBox(bbox *BoundingBox, minZ, maxZ uint32) []Tile {
 	var tiles []Tile
 
 	for z := minZ; z <= maxZ; z++ {

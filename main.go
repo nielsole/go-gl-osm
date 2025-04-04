@@ -5,18 +5,22 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
+	"runtime"
 
 	"github.com/nielsole/go-gl-osm/renderer"
 )
 
+func init() {
+	// GLFW event handling must run on the main thread
+	runtime.LockOSThread()
+}
+
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	http_listen_host := flag.String("host", "0.0.0.0", "HTTP Listening host")
 	http_listen_port := flag.Int("port", 8080, "HTTP Listening port")
 	https_listen_port := flag.Int("tls_port", 8443, "HTTPS Listening port. This listener is only enabled if both tls cert and key are set.")
@@ -56,8 +60,9 @@ func main() {
 	}
 	defer renderer.Munmap(mmapData)
 	defer mmapFile.Close()
-	renderer.InitOpenGL()
-	defer renderer.CleanupOpenGL()
+	// HTTP request multiplexer
+	httpServeMux := http.NewServeMux()
+
 	requestHandler = func(w http.ResponseWriter, r *http.Request) {
 		if *verbose {
 			logDebugf("%s request received: %s", r.Method, r.RequestURI)
@@ -67,7 +72,6 @@ func main() {
 			return
 		}
 		renderer.HandleRenderRequestOpenGL(w, r, data, 15, mmapData)
-		//renderer.HandleRenderRequest(w, r, data, 15, mmapData)
 	}
 	defer func() {
 		// Cleanup the temp file.
@@ -76,11 +80,7 @@ func main() {
 		} else {
 			fmt.Println("Temp file removed.")
 		}
-
 	}()
-
-	// HTTP request multiplexer
-	httpServeMux := http.NewServeMux()
 
 	// Tile HTTP request handler
 	httpServeMux.HandleFunc("/tile/", requestHandler)
@@ -99,28 +99,22 @@ func main() {
 	httpServeMux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
 	httpServeMux.Handle("/debug/pprof/block", pprof.Handler("block"))
 
-	// HTTP Server
-	httpServer := http.Server{
-		Handler: httpServeMux,
-	}
+	go renderer.Run(ctx)
+	// Start HTTP server in a goroutine
+	func() {
+		httpServer := &http.Server{
+			Addr:    fmt.Sprintf("%s:%d", *http_listen_host, *http_listen_port),
+			Handler: httpServeMux,
+		}
 
-	go func() {
-
-		// HTTPS listener
 		if len(*tls_cert_path) > 0 && len(*tls_key_path) > 0 {
 			go func() {
-				httpsAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", *http_listen_host, *https_listen_port))
-				if err != nil {
-					logFatalf("Failed to resolve TCP address: %v", err)
+				logInfof("Starting HTTPS server on %s:%d", *http_listen_host, *https_listen_port)
+				httpsServer := &http.Server{
+					Addr:    fmt.Sprintf("%s:%d", *http_listen_host, *https_listen_port),
+					Handler: httpServeMux,
 				}
-				httpsListener, err := net.ListenTCP("tcp", httpsAddr)
-				if err != nil {
-					logFatalf("Failed to start TCP listener: %v", err)
-				} else {
-					logInfof("Started HTTPS listener on %s\n", httpsAddr)
-				}
-				err = httpServer.ServeTLS(httpsListener, *tls_cert_path, *tls_key_path)
-				if err != nil && err != http.ErrServerClosed {
+				if err := httpsServer.ListenAndServeTLS(*tls_cert_path, *tls_key_path); err != http.ErrServerClosed {
 					logFatalf("Failed to start HTTPS server: %v", err)
 				}
 			}()
@@ -128,42 +122,10 @@ func main() {
 			logInfof("TLS is disabled")
 		}
 
-		// HTTP listener
-		httpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", *http_listen_host, *http_listen_port))
-		if err != nil {
-			logFatalf("Failed to resolve TCP address: %v", err)
-		}
-		httpListener, err := net.ListenTCP("tcp", httpAddr)
-		if err != nil {
-			logFatalf("Failed to start TCP listener: %v", err)
-		} else {
-			logInfof("Started HTTP listener on %s\n", httpAddr)
-		}
-		err = httpServer.Serve(httpListener)
-		if err != nil && err != http.ErrServerClosed {
+		logInfof("Starting HTTP server on %s:%d", *http_listen_host, *http_listen_port)
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 			logFatalf("Failed to start HTTP server: %v", err)
 		}
 	}()
-	// Setup signal capturing.
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	// Waiting for SIGINT (Ctrl+C)
-	select {
-	case <-stop:
-		fmt.Println("\nShutting down the server...")
-
-		// Create a deadline for the shutdown process.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		// Start shutdown.
-		if err := httpServer.Shutdown(ctx); err != nil {
-			fmt.Println("Error during server shutdown:", err)
-		}
-
-		// Additional cleanup code here...
-
-		fmt.Println("Server gracefully stopped.")
-	}
 }

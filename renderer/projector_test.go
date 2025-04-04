@@ -21,7 +21,7 @@ func TestNum2Deg(t *testing.T) {
 }
 
 func TestGetTilesForBoundingBox(t *testing.T) {
-	bbox := BoundingBox{
+	bbox := &BoundingBox{
 		Min: Point{
 			Lat: 53.557078,
 			Lon: 9.989095,

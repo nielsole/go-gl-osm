@@ -40,15 +40,15 @@ type Pixel struct {
 }
 
 // member function checks if a point is inside a bounding box
-func (bbox BoundingBox) contains(point Point) bool {
+func (bbox *BoundingBox) contains(point Point) bool {
 	return point.Lat >= bbox.Min.Lat && point.Lat <= bbox.Max.Lat && point.Lon >= bbox.Min.Lon && point.Lon <= bbox.Max.Lon
 }
 
-func (bbox BoundingBox) overlaps(other BoundingBox) bool {
+func (bbox *BoundingBox) overlaps(other *BoundingBox) bool {
 	return bbox.Min.Lat <= other.Max.Lat && bbox.Max.Lat >= other.Min.Lat && bbox.Min.Lon <= other.Max.Lon && bbox.Max.Lon >= other.Min.Lon
 }
 
-func (bbox BoundingBox) center() Point {
+func (bbox *BoundingBox) center() Point {
 	return Point{(bbox.Min.Lon + bbox.Max.Lon) / 2, (bbox.Min.Lat + bbox.Max.Lat) / 2}
 }
 
@@ -82,6 +82,6 @@ type Data struct {
 
 type MapObject struct {
 	//The bounding box of the map object
-	BoundingBox BoundingBox
+	BoundingBox *BoundingBox
 	Points      []Point
 }
