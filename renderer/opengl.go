@@ -85,6 +85,12 @@ type renderRequest struct {
 	ctx          context.Context
 }
 
+type pngEncodeRequest struct {
+	img  *image.RGBA
+	w    http.ResponseWriter
+	done chan struct{}
+}
+
 func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte) {
 	done := make(chan struct{})
 	renderChan <- renderRequest{w, r, data, maxTreeDepth, mmapData, done, r.Context()}
@@ -102,9 +108,32 @@ func HandleRenderRequestOpenGL(w http.ResponseWriter, r *http.Request, data *Dat
 
 func RenderLoop(ctx context.Context, mainRenderer *OpenGLRenderer) {
 	runtime.LockOSThread()
+
+	// Create PNG encoding worker pool
+	numWorkers := runtime.GOMAXPROCS(0) - 2
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+	pngEncodeChan := make(chan pngEncodeRequest, numWorkers)
+
+	// Start PNG encoding workers
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for req := range pngEncodeChan {
+				var buf bytes.Buffer
+				png.Encode(&buf, req.img)
+				req.w.Header().Set("Content-Type", "image/png")
+				req.w.Header().Set("Content-Length", strconv.Itoa(len(buf.Bytes())))
+				req.w.Write(buf.Bytes())
+				close(req.done)
+			}
+		}()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			close(pngEncodeChan)
 			return
 		case req := <-renderChan:
 			select {
@@ -127,15 +156,14 @@ func RenderLoop(ctx context.Context, mainRenderer *OpenGLRenderer) {
 				// Use the global renderer's verticesBuffer
 				vertices := mainRenderer.prepareTileVertices(req.data, req.mmapData, x, y, z)
 				img := drawOffscreen(vertices, S)
-
-				// Encode to PNG
-				var buf bytes.Buffer
-				png.Encode(&buf, img)
-				req.w.Header().Set("Content-Type", "image/png")
-				req.w.Header().Set("Content-Length", strconv.Itoa(len(buf.Bytes())))
-				req.w.Write(buf.Bytes())
 				mainRenderer.renderLock.Unlock()
-				close(req.done)
+
+				// Send image to PNG encoder worker pool
+				pngEncodeChan <- pngEncodeRequest{
+					img:  img,
+					w:    req.w,
+					done: req.done,
+				}
 			}
 		}
 	}

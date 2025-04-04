@@ -196,9 +196,10 @@ func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	testLock.Lock()
 	defer testLock.Unlock()
 
-	runtime.LockOSThread()
+	// Create channels for communication with the render loop
+	renderingReadyChan := make(chan struct{})
 
-	// Load test data
+	// Load test data and setup benchmark as before
 	pathTile := "/tile/11/1081/661.png"
 	tempFile, err := ioutil.TempFile("", "example")
 	if err != nil {
@@ -222,44 +223,54 @@ func BenchmarkServeFullTileOpenGL(b *testing.B) {
 	defer syscall.Munmap(*mmapData)
 	defer mmapFile.Close()
 
-	renderer, err := NewOpenGLRenderer()
-	if err != nil {
-		b.Fatalf("failed to create renderer: %v", err)
-	}
-	defer func() {
-		if renderer != nil && renderer.window != nil {
-			renderer.Close()
+	// Start the render thread before creating the renderer
+	go func() {
+		runtime.LockOSThread()
+		// Signal that this goroutine is ready
+		renderingReadyChan <- struct{}{}
+
+		// Create the renderer on this thread
+		renderer, err := NewOpenGLRenderer()
+		if err != nil {
+			panic(fmt.Sprintf("failed to create renderer: %v", err))
 		}
+		defer renderer.Close()
+
+		// Create a context for the benchmark
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Run the render loop on this thread
+		RenderLoop(ctx, renderer)
+
 	}()
 
-	// Create a context for the benchmark
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start the render loop in a separate goroutine
-	go RenderLoop(ctx, renderer)
+	// Wait for render thread to be ready
+	<-renderingReadyChan
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
-		w := httptest.NewRecorder()
-		HandleRenderRequestOpenGL(w, req, data, 15, mmapData)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			req := httptest.NewRequest("GET", pathTile, bytes.NewReader([]byte{}))
+			w := httptest.NewRecorder()
+			HandleRenderRequestOpenGL(w, req, data, 15, mmapData)
 
-		// Ensure the response was written
-		result := w.Result()
-		if result.StatusCode != http.StatusOK {
-			b.Fatalf("Expected status code %d but got %d", http.StatusOK, result.StatusCode)
+			// Ensure the response was written
+			result := w.Result()
+			if result.StatusCode != http.StatusOK {
+				b.Fatalf("Expected status code %d but got %d", http.StatusOK, result.StatusCode)
+			}
+			// Read and close the body to ensure everything was written
+			body, err := io.ReadAll(result.Body)
+			result.Body.Close()
+			if err != nil {
+				b.Fatal(err)
+			}
+			if len(body) == 0 {
+				b.Fatal("Expected non-empty response body")
+			}
 		}
-		// Read and close the body to ensure everything was written
-		body, err := io.ReadAll(result.Body)
-		result.Body.Close()
-		if err != nil {
-			b.Fatal(err)
-		}
-		if len(body) == 0 {
-			b.Fatal("Expected non-empty response body")
-		}
-	}
+	})
 }
 
 func BenchmarkServeFullTileZ3OpenGL(b *testing.B) {
