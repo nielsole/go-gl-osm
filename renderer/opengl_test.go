@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"image/png"
 	"io"
 	"io/ioutil"
 	"log"
@@ -79,15 +78,9 @@ func runDrawOffscreenTest(t *testing.T, checkTransparency bool) {
 
 	// Render the image
 	const size int32 = 256
-	data := drawOffscreen(vertices, size)
+	img := drawOffscreen(vertices, size)
 
 	// Decode the PNG
-	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("Failed to decode PNG: %v", err)
-	}
-
-	// Count pixels
 	bounds := img.Bounds()
 	nonWhiteCount := 0
 	transparentCount := 0
@@ -185,34 +178,6 @@ func BenchmarkServeEmptyTileOpenGL(b *testing.B) {
 			b.Fatal("Expected non-empty response body")
 		}
 	}
-}
-
-func setupOpenGL() error {
-	if initialized {
-		return nil
-	}
-	runtime.LockOSThread()
-
-	if err := glfw.Init(); err != nil {
-		return fmt.Errorf("failed to initialize GLFW: %v", err)
-	}
-
-	glfw.WindowHint(glfw.ContextVersionMajor, 4)
-	glfw.WindowHint(glfw.ContextVersionMinor, 1)
-	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
-	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
-	glfw.WindowHint(glfw.Visible, glfw.False)
-
-	var err error
-	sharedWindow, err = glfw.CreateWindow(256, 256, "", nil, nil)
-	if err != nil {
-		glfw.Terminate()
-		return fmt.Errorf("failed to create window: %v", err)
-	}
-
-	sharedWindow.MakeContextCurrent()
-	initialized = true
-	return nil
 }
 
 // db8aea62f12c1c49517be2f1fff72de808df7b06

@@ -114,31 +114,31 @@ func RenderLoop(ctx context.Context, mainRenderer *OpenGLRenderer) {
 			default:
 				mainRenderer.renderLock.Lock()
 				mainRenderer.window.MakeContextCurrent()
-				handleRenderRequest(req.w, req.r, req.data, req.maxTreeDepth, req.mmapData, mainRenderer)
+				z, x, y, ext, err := utils.ParsePath(req.r.URL.Path)
+				if ext != "png" {
+					http.Error(req.w, "Only png is supported", http.StatusBadRequest)
+					continue
+				}
+				if err != nil {
+					http.Error(req.w, err.Error(), http.StatusBadRequest)
+					continue
+				}
+				const S = 256
+				// Use the global renderer's verticesBuffer
+				vertices := mainRenderer.prepareTileVertices(req.data, req.mmapData, x, y, z)
+				img := drawOffscreen(vertices, S)
+
+				// Encode to PNG
+				var buf bytes.Buffer
+				png.Encode(&buf, img)
+				req.w.Header().Set("Content-Type", "image/png")
+				req.w.Header().Set("Content-Length", strconv.Itoa(len(buf.Bytes())))
+				req.w.Write(buf.Bytes())
 				mainRenderer.renderLock.Unlock()
 				close(req.done)
 			}
 		}
 	}
-}
-
-func handleRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxTreeDepth uint32, mmapData *[]byte, mainRenderer *OpenGLRenderer) {
-	z, x, y, ext, err := utils.ParsePath(r.URL.Path)
-	if ext != "png" {
-		http.Error(w, "Only png is supported", http.StatusBadRequest)
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	const S = 256
-	// Use the global renderer's verticesBuffer
-	vertices := mainRenderer.prepareTileVertices(data, mmapData, x, y, z)
-	dataBytes := drawOffscreen(vertices, S)
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Content-Length", strconv.Itoa(len(dataBytes)))
-	w.Write(dataBytes)
 }
 
 func checkShaderError(shader uint32) error {
@@ -199,7 +199,7 @@ func setupFramebuffer(size int32) error {
 	return nil
 }
 
-func drawOffscreen(vertices []float32, size int32) []byte {
+func drawOffscreen(vertices []float32, size int32) *image.RGBA {
 	// Add check for empty vertices at the start
 	if len(vertices) < 3 { // Need at least tile coordinates
 		// Return a blank white tile
@@ -209,9 +209,7 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 				img.Set(x, y, color.RGBA{255, 255, 255, 255})
 			}
 		}
-		var buf bytes.Buffer
-		png.Encode(&buf, img)
-		return buf.Bytes()
+		return img
 	}
 
 	// Just bind the framebuffer - setup is already done
@@ -276,9 +274,7 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 				img.Set(x, y, color.RGBA{255, 255, 255, 255})
 			}
 		}
-		var buf bytes.Buffer
-		png.Encode(&buf, img)
-		return buf.Bytes()
+		return img
 	}
 
 	// Bind and update vertex buffer
@@ -328,11 +324,7 @@ func drawOffscreen(vertices []float32, size int32) []byte {
 
 	// Reset framebuffer
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	// Encode to PNG
-	var buf bytes.Buffer
-	png.Encode(&buf, img)
-	return buf.Bytes()
+	return img
 }
 
 func HandleOpenGLRenderRequest(w http.ResponseWriter, r *http.Request, data *Data, maxZoom int, mmapData *[]byte, renderer *OpenGLRenderer) {

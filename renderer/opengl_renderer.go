@@ -1,10 +1,8 @@
 package renderer
 
 import (
-	"bytes"
 	"fmt"
 	"image"
-	"image/png"
 	"log"
 	"sync"
 
@@ -166,14 +164,12 @@ func (r *OpenGLRenderer) RenderTile(data *Data, mmapData *[]byte, x, y, z uint32
 	// Use existing drawOffscreen function
 	vertices := r.prepareTileVertices(data, mmapData, x, y, z)
 	imgBytes := drawOffscreen(vertices, 256)
-	img, _ := png.Decode(bytes.NewReader(imgBytes))
-	return img
+	return imgBytes
 }
 
 func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y, z uint32) []float32 {
 	tile := Tile{X: x, Y: y, Z: z}
 	bbox := getBoundingBox(tile)
-	const S = 256
 
 	// Reset the buffer length while keeping capacity
 	r.verticesBuffer = r.verticesBuffer[:0]
@@ -197,7 +193,6 @@ func (r *OpenGLRenderer) prepareTileVertices(data *Data, mmapData *[]byte, x, y,
 		requiredCap := len(r.verticesBuffer) + (len(way.Points)-1)*4 // 4 float32s per line segment
 		if requiredCap > cap(r.verticesBuffer) {
 			newCap := cap(r.verticesBuffer) * 2
-			fmt.Println("newCap", newCap, "requiredCap", requiredCap)
 			if newCap < requiredCap {
 				newCap = requiredCap
 			}
